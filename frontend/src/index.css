@@ -1,0 +1,23 @@
+
+:root {
+  color-scheme: dark;
+  background: #0b0b0e;
+}
+
+html {
+  min-width: 320px;
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+::selection {
+  background: #c5f277;
+  color: #11140b;
+}
