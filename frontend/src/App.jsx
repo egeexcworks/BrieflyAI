@@ -1,49 +1,77 @@
-
 import { useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import "./App.css";
 
-const API_URL = "http://127.0.0.1:8000/api/analyze";
-const MAX_SIZE = 10 * 1024 * 1024;
-const ACCEPTED_TYPES = [".pdf", ".docx", ".txt"];
+const API_URL = "https://brieflyai-api.onrender.com/api/analyze";
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
+const ALLOWED_EXTENSIONS = [".pdf", ".docx", ".txt"];
 
 export default function App() {
   const inputRef = useRef(null);
+
   const [file, setFile] = useState(null);
   const [dragging, setDragging] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
   const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
 
-  function selectFile(selected) {
-    if (!selected) return;
+  function validateFile(selectedFile) {
+    if (!selectedFile) return "Please select a document.";
 
-    const extension = selected.name
-      .slice(selected.name.lastIndexOf("."))
+    const extension = selectedFile.name
+      .slice(selectedFile.name.lastIndexOf("."))
       .toLowerCase();
 
-    if (!ACCEPTED_TYPES.includes(extension)) {
-      setError("Choose a PDF, DOCX, or TXT document.");
-      return;
+    if (!ALLOWED_EXTENSIONS.includes(extension)) {
+      return "Unsupported file type. Choose a PDF, DOCX, or TXT file.";
     }
 
-    if (selected.size > MAX_SIZE) {
-      setError("Your document exceeds the 10 MB limit.");
-      return;
+    if (selectedFile.size > MAX_FILE_SIZE) {
+      return "The file is too large. Maximum size is 10 MB.";
     }
 
-    if (selected.size === 0) {
-      setError("This file is empty. Choose another document.");
-      return;
+    if (selectedFile.size === 0) {
+      return "This file is empty. Please choose another document.";
     }
 
-    setFile(selected);
+    return "";
+  }
+
+  function selectFile(selectedFile) {
+    const validationError = validateFile(selectedFile);
+
+    setError(validationError);
     setResult(null);
-    setError("");
+
+    if (validationError) {
+      setFile(null);
+      return;
+    }
+
+    setFile(selectedFile);
+  }
+
+  function handleInputChange(event) {
+    selectFile(event.target.files?.[0] ?? null);
+    // Allow selecting the same file again after an error.
+    event.target.value = "";
+  }
+
+  function handleDrop(event) {
+    event.preventDefault();
+    setDragging(false);
+    selectFile(event.dataTransfer.files?.[0] ?? null);
   }
 
   async function analyzeDocument() {
     if (!file || loading) return;
+
+    const validationError = validateFile(file);
+
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
 
     setLoading(true);
     setError("");
@@ -58,25 +86,78 @@ export default function App() {
         body: formData,
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        throw new Error(data.detail || "Document analysis failed.");
+        throw new Error(
+          data.detail || `Request failed with status ${response.status}.`
+        );
       }
 
-      setResult(data);
+      if (!data.analysis) {
+        throw new Error("The API returned no analysis. Please try again.");
+      }
+
+      setResult({
+        filename: data.filename || file.name,
+        characters: data.characters_analyzed,
+        analysis: data.analysis,
+      });
     } catch (err) {
       setError(
-        err.message === "Failed to fetch"
-          ? "Cannot reach BrieflyAI. Make sure the backend and Ollama are running."
-          : err.message || "Something went wrong. Please try again."
+        err.message ||
+          "Unable to connect to BrieflyAI. Please try again later."
       );
     } finally {
       setLoading(false);
     }
   }
 
-  function reset() {
+  async function copyAnalysis() {
+    if (!result?.analysis) return;
+
+    try {
+      await navigator.clipboard.writeText(result.analysis);
+      setError("");
+      window.alert("Analysis copied to clipboard.");
+    } catch {
+      setError(
+        "Clipboard access was blocked by your browser. You can select and copy the result manually."
+      );
+    }
+  }
+
+  function exportMarkdown() {
+    if (!result?.analysis) return;
+
+    const markdown = [
+      `# BrieflyAI Analysis`,
+      ``,
+      `**Document:** ${result.filename}`,
+      ``,
+      result.analysis,
+      ``,
+      `---`,
+      `Generated with BrieflyAI`,
+    ].join("\n");
+
+    const blob = new Blob([markdown], {
+      type: "text/markdown;charset=utf-8",
+    });
+
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const safeName = result.filename.replace(/\.[^.]+$/, "");
+
+    link.href = url;
+    link.download = `${safeName || "document"}-analysis.md`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function resetAnalysis() {
     setFile(null);
     setResult(null);
     setError("");
@@ -84,217 +165,220 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell">
+    <main className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#" onClick={(e) => e.preventDefault()}>
+        <a className="brand" href="/" aria-label="BrieflyAI home">
           <span className="brand-mark">b.</span>
-          <span>briefly<span className="brand-ai">ai</span></span>
+          <span>Briefly<span className="brand-light">AI</span></span>
         </a>
 
-        <div className="header-right">
-          <span className="local-badge">
-            <span className="status-dot" />
-            Runs locally
-          </span>
-          <a className="github-link" href="https://github.com/egeexcworks/BrieflyAI" target="_blank" rel="noreferrer">
-            GitHub ↗
-          </a>
-        </div>
+        <a
+          className="github-link"
+          href="https://github.com/egeexcworks/BrieflyAI"
+          target="_blank"
+          rel="noreferrer"
+        >
+          GitHub <span aria-hidden="true">↗</span>
+        </a>
       </header>
 
-      <main className="main-content">
-        <section className="hero">
-          <div className="eyebrow">
-            <span className="eyebrow-line" />
-            DOCUMENT INTELLIGENCE
-          </div>
-          <h1>
-            Less reading.
-            <br />
-            <span>More understanding.</span>
-          </h1>
-          <p className="hero-copy">
-            Turn lengthy documents into clear summaries, actionable tasks,
-            and important dates. Powered by AI running on your machine.
-          </p>
-        </section>
+      <section className="hero">
+        <div className="eyebrow">
+          <span className="status-dot" />
+          DOCUMENT INTELLIGENCE
+        </div>
 
-        <section className="workspace">
-          <div className="section-heading">
-            <div>
-              <h2>Analyze a document</h2>
-              <p>Upload a file to extract the information that matters.</p>
-            </div>
+        <h1>
+          Read less.
+          <br />
+          <span>Understand more.</span>
+        </h1>
+
+        <p className="hero-description">
+          Turn long documents into clear summaries, actionable tasks,
+          important dates, and source references.
+        </p>
+      </section>
+
+      <section className="workspace">
+        <div className="section-heading">
+          <div>
             <span className="step-label">01 / UPLOAD</span>
+            <h2>Your document</h2>
           </div>
+          <span className="file-limit">MAX 10 MB</span>
+        </div>
 
-          <div
-            className={`dropzone ${dragging ? "is-dragging" : ""} ${file ? "has-file" : ""}`}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragging(true);
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={(e) => {
-              e.preventDefault();
+        <input
+          ref={inputRef}
+          className="hidden-input"
+          type="file"
+          accept=".pdf,.docx,.txt"
+          onChange={handleInputChange}
+          aria-label="Choose a document"
+        />
+
+        <div
+          className={`dropzone ${dragging ? "dropzone-active" : ""} ${
+            file ? "dropzone-selected" : ""
+          }`}
+          onDragEnter={(event) => {
+            event.preventDefault();
+            setDragging(true);
+          }}
+          onDragOver={(event) => event.preventDefault()}
+          onDragLeave={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) {
               setDragging(false);
-              selectFile(e.dataTransfer.files?.[0]);
-            }}
-          >
-            <input
-              ref={inputRef}
-              type="file"
-              accept=".pdf,.docx,.txt"
-              hidden
-              onChange={(e) => selectFile(e.target.files?.[0])}
-            />
+            }
+          }}
+          onDrop={handleDrop}
+        >
+          {file ? (
+            <>
+              <div className="file-icon" aria-hidden="true">
+                {file.name.toLowerCase().endsWith(".pdf")
+                  ? "PDF"
+                  : file.name.toLowerCase().endsWith(".docx")
+                    ? "DOC"
+                    : "TXT"}
+              </div>
 
-            {file ? (
-              <>
-                <div className="file-icon">↗</div>
-                <div className="file-details">
-                  <strong>{file.name}</strong>
-                  <span>
-                    {(file.size / 1024).toFixed(file.size < 1024 * 1024 ? 1 : 0)}
-                    {file.size < 1024 * 1024 ? " KB" : " KB"} · Ready to analyze
-                  </span>
-                </div>
-                <button className="change-file" onClick={() => inputRef.current?.click()}>
-                  Change file
-                </button>
-              </>
-            ) : (
-              <>
-                <div className="upload-icon">
-                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 15.5v3A1.5 1.5 0 006.5 20h11a1.5 1.5 0 001.5-1.5v-3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </div>
-                <strong>Drop your document here</strong>
-                <span>or browse files on your computer</span>
-                <button className="browse-button" onClick={() => inputRef.current?.click()}>
-                  Choose a file
-                </button>
-              </>
-            )}
-          </div>
+              <div className="selected-file">
+                <strong title={file.name}>{file.name}</strong>
+                <span>{(file.size / 1024).toFixed(1)} KB · Ready to analyze</span>
+              </div>
 
-          <div className="upload-meta">
-            <span>PDF, DOCX, TXT</span>
-            <span>Maximum file size: 10 MB</span>
-          </div>
+              <button
+                className="remove-file"
+                type="button"
+                onClick={resetAnalysis}
+                aria-label="Remove selected file"
+              >
+                ×
+              </button>
+            </>
+          ) : (
+            <div className="dropzone-content">
+              <div className="upload-icon" aria-hidden="true">
+                <svg
+                  viewBox="0 0 24 24"
+                  width="30"
+                  height="30"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                >
+                  <path d="M12 16V4m0 0L7 9m5-5 5 5" />
+                  <path d="M5 14v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5" />
+                </svg>
+              </div>
 
-          {error && (
-            <div className="error-message" role="alert">
-              <span>!</span> {error}
+              <h3>Drop your document here</h3>
+              <p>or choose a file from your computer</p>
+
+              <button
+                className="browse-button"
+                type="button"
+                onClick={() => inputRef.current?.click()}
+              >
+                Browse files
+              </button>
+
+              <span className="supported-formats">
+                PDF <i /> DOCX <i /> TXT
+              </span>
             </div>
           )}
+        </div>
 
-          <button
-            className="analyze-button"
-            disabled={!file || loading}
-            onClick={analyzeDocument}
-          >
-            {loading ? (
-              <>
-                <span className="spinner" />
-                Analyzing document...
-              </>
-            ) : (
-              <>
-                Analyze document <span>↗</span>
-              </>
-            )}
-          </button>
-
-          {loading && (
-            <p className="loading-note">
-              Your local AI is reading the document. This may take a moment.
-            </p>
+        <button
+          className="analyze-button"
+          type="button"
+          onClick={analyzeDocument}
+          disabled={!file || loading}
+        >
+          {loading ? (
+            <>
+              <span className="spinner" />
+              Analyzing document...
+            </>
+          ) : (
+            <>
+              Analyze document <span aria-hidden="true">↗</span>
+            </>
           )}
-        </section>
+        </button>
 
-        {result && (
-          <section className="results-section">
-            <div className="results-heading">
-              <div>
-                <div className="eyebrow">
-                  <span className="eyebrow-line" />
-                  ANALYSIS COMPLETE
-                </div>
-                <h2>Your document, simplified.</h2>
-                <p className="result-filename">{result.filename}</p>
-              </div>
-              <button className="secondary-button" onClick={reset}>
-                New document +
+        {loading && (
+          <div className="loading-note" role="status">
+            <span>This can take a little while, especially on a free service.</span>
+          </div>
+        )}
+
+        {error && (
+          <div className="error-message" role="alert">
+            <span className="error-icon">!</span>
+            <span>{error}</span>
+          </div>
+        )}
+      </section>
+
+      {result && (
+        <section className="results-section">
+          <div className="section-heading results-heading">
+            <div>
+              <span className="step-label">02 / RESULTS</span>
+              <h2>Your document, clarified.</h2>
+              <p className="result-filename">{result.filename}</p>
+            </div>
+
+            <div className="result-actions">
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={copyAnalysis}
+              >
+                Copy
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={exportMarkdown}
+              >
+                Export .md
               </button>
             </div>
+          </div>
 
-            <div className="result-stats">
-              <div>
-                <span className="stat-number">✓</span>
-                <span>Analysis complete</span>
-              </div>
-              <div>
-                <span className="stat-number">
-                  {Number(result.characters_analyzed || 0).toLocaleString()}
-                </span>
-                <span>Characters reviewed</span>
-              </div>
-              <div>
-                <span className="stat-number">Local</span>
-                <span>AI processing</span>
-              </div>
+          <article className="analysis-card">
+            <div className="analysis-content">
+              <ReactMarkdown>{result.analysis}</ReactMarkdown>
             </div>
 
-            <article className="analysis-card">
-              <div className="analysis-card-heading">
-                <span className="analysis-symbol">b.</span>
-                <div>
-                  <strong>Document insights</strong>
-                  <span>Summary, tasks, dates and references</span>
-                </div>
-              </div>
-              <div className="markdown-content">
-                <ReactMarkdown>{result.analysis}</ReactMarkdown>
-              </div>
-              <div className="result-actions">
-                <button
-                  className="secondary-button"
-                  onClick={() => navigator.clipboard.writeText(result.analysis)}
-                >
-                  Copy analysis
-                </button>
-                <button
-                  className="secondary-button"
-                  onClick={() => {
-                    const blob = new Blob([result.analysis], { type: "text/markdown;charset=utf-8" });
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement("a");
-                    link.href = url;
-                    link.download = "brieflyai-analysis.md";
-                    link.click();
-                    URL.revokeObjectURL(url);
-                  }}
-                >
-                  Export Markdown ↓
-                </button>
-              </div>
-            </article>
+            {typeof result.characters === "number" && (
+              <footer className="analysis-footer">
+                {result.characters.toLocaleString()} characters processed
+              </footer>
+            )}
+          </article>
 
-            <p className="accuracy-note">
-              AI-generated results can contain mistakes. Verify important dates,
-              deadlines, and decisions against the original document.
-            </p>
-          </section>
-        )}
-      </main>
+          <button
+            className="start-over-button"
+            type="button"
+            onClick={resetAnalysis}
+          >
+            ← Analyze another document
+          </button>
+        </section>
+      )}
 
-      <footer className="footer">
-        <a className="footer-brand" href="#" onClick={(e) => e.preventDefault()}>brieflyai</a>
-        <span>Private by design. Powered by your local AI.</span>
-        <span>Built for clarity.</span>
+      <footer className="site-footer">
+        <a href="https://github.com/egeexcworks/BrieflyAI">
+          BrieflyAI
+        </a>
+        <span>Built to make long documents easier to understand.</span>
       </footer>
-    </div>
+    </main>
   );
 }
